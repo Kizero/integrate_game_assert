@@ -11,6 +11,9 @@ import { AssetCategory } from '../core/taxonomy.js';
 const app = express();
 const manager = new AssetManager();
 
+// 初始化数据库
+await manager.init();
+
 app.use(express.json());
 
 // 跨域支持

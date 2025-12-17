@@ -15,6 +15,9 @@ import path from 'path';
 const program = new Command();
 const manager = new AssetManager();
 
+// 初始化数据库
+await manager.init();
+
 program
   .name('game-asset-manager')
   .description('🎮 专业的游戏素材收集、管理和分发工具')

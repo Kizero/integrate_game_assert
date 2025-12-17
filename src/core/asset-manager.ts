@@ -23,6 +23,7 @@ export interface ImportOptions {
 export class AssetManager {
   private db: AssetDatabase;
   private storageRoot: string;
+  private initialized: boolean = false;
 
   constructor(
     dbPath: string = './storage/database/assets.db',
@@ -34,9 +35,29 @@ export class AssetManager {
   }
 
   /**
+   * 初始化数据库(必须在使用前调用)
+   */
+  async init(): Promise<void> {
+    if (!this.initialized) {
+      await this.db.init();
+      this.initialized = true;
+    }
+  }
+
+  /**
+   * 确保已初始化
+   */
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      throw new Error('AssetManager not initialized. Call init() first.');
+    }
+  }
+
+  /**
    * 导入单个素材文件
    */
   async importAsset(filePath: string, options: ImportOptions = {}): Promise<AssetMetadata> {
+    this.ensureInitialized();
     // 验证文件存在
     if (!fs.existsSync(filePath)) {
       throw new Error(`文件不存在: ${filePath}`);
@@ -128,6 +149,7 @@ export class AssetManager {
    * 获取素材
    */
   getAsset(id: string): AssetMetadata | null {
+    this.ensureInitialized();
     return this.db.getAsset(id);
   }
 
@@ -135,6 +157,7 @@ export class AssetManager {
    * 按分类浏览素材
    */
   browseByCategory(category: AssetCategory, limit: number = 100): AssetMetadata[] {
+    this.ensureInitialized();
     return this.db.searchByCategory(category, limit);
   }
 
@@ -142,6 +165,7 @@ export class AssetManager {
    * 搜索素材
    */
   search(keyword: string, limit: number = 50): AssetMetadata[] {
+    this.ensureInitialized();
     return this.db.search(keyword, limit);
   }
 
@@ -149,6 +173,7 @@ export class AssetManager {
    * 按标签搜索
    */
   searchByTags(tags: string[], matchAll: boolean = false): AssetMetadata[] {
+    this.ensureInitialized();
     return this.db.searchByTags(tags, matchAll);
   }
 
@@ -156,6 +181,7 @@ export class AssetManager {
    * 导出素材到指定目录
    */
   exportAsset(assetId: string, targetDir: string): string {
+    this.ensureInitialized();
     const asset = this.db.getAsset(assetId);
     if (!asset) {
       throw new Error(`素材不存在: ${assetId}`);
@@ -182,6 +208,7 @@ export class AssetManager {
    * 获取统计信息
    */
   getStatistics() {
+    this.ensureInitialized();
     return this.db.getStatistics();
   }
 
@@ -189,6 +216,7 @@ export class AssetManager {
    * 删除素材
    */
   deleteAsset(assetId: string): void {
+    this.ensureInitialized();
     const asset = this.db.getAsset(assetId);
     if (!asset) {
       throw new Error(`素材不存在: ${assetId}`);

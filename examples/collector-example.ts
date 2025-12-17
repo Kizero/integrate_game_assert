@@ -40,6 +40,8 @@ async function main() {
 
       // 导入到素材库
       const manager = new AssetManager();
+      await manager.init();
+
       const imported = await manager.importAsset(filePath, {
         category: assets[0].category,
         tags: assets[0].tags,

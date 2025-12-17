@@ -8,6 +8,9 @@ async function main() {
   // 创建资产管理器实例
   const manager = new AssetManager();
 
+  // 初始化数据库
+  await manager.init();
+
   console.log('=== 游戏素材管理器示例 ===\n');
 
   // 1. 导入本地素材
