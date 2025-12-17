@@ -1,29 +1,46 @@
 /**
- * 数据库管理 - Database Manager
- * 使用 SQLite 存储素材元数据
+ * 数据库管理 - Database Manager (SQL.js 版本)
+ * 使用 SQL.js (纯 JavaScript 实现,无需编译)
  */
 
-import Database from 'better-sqlite3';
+import initSqlJs, { Database as SqlJsDatabase } from 'sql.js';
 import path from 'path';
 import fs from 'fs-extra';
 import { AssetMetadata, AssetCategory } from './taxonomy.js';
 
 export class AssetDatabase {
-  private db: Database.Database;
+  private db: SqlJsDatabase | null = null;
+  private dbPath: string;
+  private SQL: any;
 
   constructor(dbPath: string = './storage/database/assets.db') {
-    // 确保目录存在
+    this.dbPath = dbPath;
     fs.ensureDirSync(path.dirname(dbPath));
-
-    this.db = new Database(dbPath);
-    this.initialize();
   }
 
   /**
-   * 初始化数据库表
+   * 初始化数据库
    */
-  private initialize() {
-    this.db.exec(`
+  async init(): Promise<void> {
+    this.SQL = await initSqlJs();
+
+    // 尝试加载现有数据库
+    if (fs.existsSync(this.dbPath)) {
+      const buffer = fs.readFileSync(this.dbPath);
+      this.db = new this.SQL.Database(buffer);
+    } else {
+      this.db = new this.SQL.Database();
+      await this.createTables();
+    }
+  }
+
+  /**
+   * 创建数据库表
+   */
+  private async createTables(): Promise<void> {
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run(`
       CREATE TABLE IF NOT EXISTS assets (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -55,10 +72,8 @@ export class AssetDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_category ON assets(category);
       CREATE INDEX IF NOT EXISTS idx_subcategory ON assets(subcategory);
-      CREATE INDEX IF NOT EXISTS idx_tags ON assets(tags);
       CREATE INDEX IF NOT EXISTS idx_license ON assets(license);
 
-      -- 标签表 (用于标签搜索)
       CREATE TABLE IF NOT EXISTS asset_tags (
         asset_id TEXT NOT NULL,
         tag TEXT NOT NULL,
@@ -68,7 +83,6 @@ export class AssetDatabase {
 
       CREATE INDEX IF NOT EXISTS idx_tag ON asset_tags(tag);
 
-      -- 收藏/集合表
       CREATE TABLE IF NOT EXISTS collections (
         id TEXT PRIMARY KEY,
         name TEXT NOT NULL,
@@ -84,89 +98,103 @@ export class AssetDatabase {
         FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE
       );
     `);
+
+    this.save();
+  }
+
+  /**
+   * 保存数据库到文件
+   */
+  private save(): void {
+    if (!this.db) return;
+    const data = this.db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(this.dbPath, buffer);
   }
 
   /**
    * 添加素材
    */
   addAsset(asset: AssetMetadata): void {
-    const stmt = this.db.prepare(`
-      INSERT INTO assets (
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run(
+      `INSERT INTO assets (
         id, name, category, subcategory, style, genre, tags,
         file_type, file_size, file_path,
         description, author, license, source_url,
         resolution, duration, frame_rate, quality,
         created_at, updated_at, download_count, rating
-      ) VALUES (
-        ?, ?, ?, ?, ?, ?, ?,
-        ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?,
-        ?, ?, ?, ?
-      )
-    `);
-
-    stmt.run(
-      asset.id,
-      asset.name,
-      asset.category,
-      asset.subcategory || null,
-      asset.style || null,
-      asset.genre ? JSON.stringify(asset.genre) : null,
-      JSON.stringify(asset.tags),
-      asset.fileType,
-      asset.fileSize,
-      asset.filePath,
-      asset.description || null,
-      asset.author || null,
-      asset.license,
-      asset.sourceUrl || null,
-      asset.resolution || null,
-      asset.duration || null,
-      asset.frameRate || null,
-      asset.quality || null,
-      asset.createdAt.toISOString(),
-      asset.updatedAt.toISOString(),
-      asset.downloadCount,
-      asset.rating || null
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        asset.id,
+        asset.name,
+        asset.category,
+        asset.subcategory || null,
+        asset.style || null,
+        asset.genre ? JSON.stringify(asset.genre) : null,
+        JSON.stringify(asset.tags),
+        asset.fileType,
+        asset.fileSize,
+        asset.filePath,
+        asset.description || null,
+        asset.author || null,
+        asset.license,
+        asset.sourceUrl || null,
+        asset.resolution || null,
+        asset.duration || null,
+        asset.frameRate || null,
+        asset.quality || null,
+        asset.createdAt.toISOString(),
+        asset.updatedAt.toISOString(),
+        asset.downloadCount,
+        asset.rating || null,
+      ]
     );
 
     // 添加标签
-    const tagStmt = this.db.prepare('INSERT INTO asset_tags (asset_id, tag) VALUES (?, ?)');
     for (const tag of asset.tags) {
-      tagStmt.run(asset.id, tag);
+      this.db.run('INSERT INTO asset_tags (asset_id, tag) VALUES (?, ?)', [asset.id, tag]);
     }
+
+    this.save();
   }
 
   /**
    * 获取素材
    */
   getAsset(id: string): AssetMetadata | null {
-    const row = this.db.prepare('SELECT * FROM assets WHERE id = ?').get(id) as any;
-    if (!row) return null;
+    if (!this.db) throw new Error('Database not initialized');
 
-    return this.rowToAsset(row);
+    const result = this.db.exec('SELECT * FROM assets WHERE id = ?', [id]);
+    if (result.length === 0 || result[0].values.length === 0) return null;
+
+    return this.rowToAsset(result[0].columns, result[0].values[0]);
   }
 
   /**
    * 按分类搜索素材
    */
   searchByCategory(category: AssetCategory, limit: number = 100): AssetMetadata[] {
-    const rows = this.db.prepare('SELECT * FROM assets WHERE category = ? LIMIT ?')
-      .all(category, limit) as any[];
+    if (!this.db) throw new Error('Database not initialized');
 
-    return rows.map(row => this.rowToAsset(row));
+    const result = this.db.exec('SELECT * FROM assets WHERE category = ? LIMIT ?', [category, limit]);
+    if (result.length === 0) return [];
+
+    return result[0].values.map(row => this.rowToAsset(result[0].columns, row));
   }
 
   /**
    * 按标签搜索素材
    */
   searchByTags(tags: string[], matchAll: boolean = false): AssetMetadata[] {
+    if (!this.db) throw new Error('Database not initialized');
     if (tags.length === 0) return [];
 
     let query: string;
+    let params: any[];
+
     if (matchAll) {
-      // 匹配所有标签
       query = `
         SELECT a.* FROM assets a
         WHERE a.id IN (
@@ -176,53 +204,64 @@ export class AssetDatabase {
           HAVING COUNT(DISTINCT tag) = ?
         )
       `;
+      params = [...tags, tags.length];
     } else {
-      // 匹配任意标签
       query = `
         SELECT DISTINCT a.* FROM assets a
         JOIN asset_tags t ON a.id = t.asset_id
         WHERE t.tag IN (${tags.map(() => '?').join(',')})
       `;
+      params = tags;
     }
 
-    const params = matchAll ? [...tags, tags.length] : tags;
-    const rows = this.db.prepare(query).all(...params) as any[];
+    const result = this.db.exec(query, params);
+    if (result.length === 0) return [];
 
-    return rows.map(row => this.rowToAsset(row));
+    return result[0].values.map(row => this.rowToAsset(result[0].columns, row));
   }
 
   /**
    * 全文搜索
    */
   search(keyword: string, limit: number = 50): AssetMetadata[] {
-    const rows = this.db.prepare(`
-      SELECT * FROM assets
-      WHERE name LIKE ? OR description LIKE ? OR tags LIKE ?
-      LIMIT ?
-    `).all(`%${keyword}%`, `%${keyword}%`, `%${keyword}%`, limit) as any[];
+    if (!this.db) throw new Error('Database not initialized');
 
-    return rows.map(row => this.rowToAsset(row));
+    const pattern = `%${keyword}%`;
+    const result = this.db.exec(
+      `SELECT * FROM assets
+       WHERE name LIKE ? OR description LIKE ? OR tags LIKE ?
+       LIMIT ?`,
+      [pattern, pattern, pattern, limit]
+    );
+
+    if (result.length === 0) return [];
+    return result[0].values.map(row => this.rowToAsset(result[0].columns, row));
   }
 
   /**
-   * 获取所有分类的统计信息
+   * 获取统计信息
    */
   getStatistics() {
-    const categoryCounts = this.db.prepare(`
-      SELECT category, COUNT(*) as count
-      FROM assets
-      GROUP BY category
-    `).all() as any[];
+    if (!this.db) throw new Error('Database not initialized');
 
-    const totalAssets = this.db.prepare('SELECT COUNT(*) as count FROM assets').get() as any;
-    const totalSize = this.db.prepare('SELECT SUM(file_size) as size FROM assets').get() as any;
+    const countResult = this.db.exec('SELECT COUNT(*) as count FROM assets');
+    const sizeResult = this.db.exec('SELECT SUM(file_size) as size FROM assets');
+    const categoryResult = this.db.exec('SELECT category, COUNT(*) as count FROM assets GROUP BY category');
+
+    const totalAssets = countResult[0]?.values[0]?.[0] || 0;
+    const totalSize = sizeResult[0]?.values[0]?.[0] || 0;
+
+    const byCategory: Record<string, number> = {};
+    if (categoryResult.length > 0) {
+      categoryResult[0].values.forEach((row: any[]) => {
+        byCategory[row[0]] = row[1];
+      });
+    }
 
     return {
-      totalAssets: totalAssets.count,
-      totalSize: totalSize.size || 0,
-      byCategory: Object.fromEntries(
-        categoryCounts.map(row => [row.category, row.count])
-      ),
+      totalAssets: Number(totalAssets),
+      totalSize: Number(totalSize),
+      byCategory,
     };
   }
 
@@ -230,43 +269,54 @@ export class AssetDatabase {
    * 更新下载计数
    */
   incrementDownloadCount(id: string): void {
-    this.db.prepare('UPDATE assets SET download_count = download_count + 1 WHERE id = ?').run(id);
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run('UPDATE assets SET download_count = download_count + 1 WHERE id = ?', [id]);
+    this.save();
   }
 
   /**
    * 删除素材
    */
   deleteAsset(id: string): void {
-    this.db.prepare('DELETE FROM assets WHERE id = ?').run(id);
+    if (!this.db) throw new Error('Database not initialized');
+
+    this.db.run('DELETE FROM assets WHERE id = ?', [id]);
+    this.save();
   }
 
   /**
    * 将数据库行转换为 AssetMetadata
    */
-  private rowToAsset(row: any): AssetMetadata {
+  private rowToAsset(columns: string[], row: any[]): AssetMetadata {
+    const obj: any = {};
+    columns.forEach((col, i) => {
+      obj[col] = row[i];
+    });
+
     return {
-      id: row.id,
-      name: row.name,
-      category: row.category as AssetCategory,
-      subcategory: row.subcategory,
-      style: row.style,
-      genre: row.genre ? JSON.parse(row.genre) : undefined,
-      tags: JSON.parse(row.tags),
-      fileType: row.file_type,
-      fileSize: row.file_size,
-      filePath: row.file_path,
-      description: row.description,
-      author: row.author,
-      license: row.license,
-      sourceUrl: row.source_url,
-      resolution: row.resolution,
-      duration: row.duration,
-      frameRate: row.frame_rate,
-      quality: row.quality,
-      createdAt: new Date(row.created_at),
-      updatedAt: new Date(row.updated_at),
-      downloadCount: row.download_count,
-      rating: row.rating,
+      id: obj.id,
+      name: obj.name,
+      category: obj.category as AssetCategory,
+      subcategory: obj.subcategory,
+      style: obj.style,
+      genre: obj.genre ? JSON.parse(obj.genre) : undefined,
+      tags: JSON.parse(obj.tags || '[]'),
+      fileType: obj.file_type,
+      fileSize: obj.file_size,
+      filePath: obj.file_path,
+      description: obj.description,
+      author: obj.author,
+      license: obj.license,
+      sourceUrl: obj.source_url,
+      resolution: obj.resolution,
+      duration: obj.duration,
+      frameRate: obj.frame_rate,
+      quality: obj.quality,
+      createdAt: new Date(obj.created_at),
+      updatedAt: new Date(obj.updated_at),
+      downloadCount: obj.download_count,
+      rating: obj.rating,
     };
   }
 
@@ -274,6 +324,10 @@ export class AssetDatabase {
    * 关闭数据库
    */
   close(): void {
-    this.db.close();
+    if (this.db) {
+      this.save();
+      this.db.close();
+      this.db = null;
+    }
   }
 }
