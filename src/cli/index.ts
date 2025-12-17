@@ -204,7 +204,7 @@ program
 
         console.log(chalk.bold('各分类素材数量:\n'));
         Object.entries(stats.byCategory).forEach(([cat, count]) => {
-          const rule = CategoryRules[cat as AssetCategory];
+          const rule = CategoryRules[cat as keyof typeof CategoryRules];
           const name = rule ? rule.name : cat;
           console.log(chalk.gray(`  ${name}: ${count}`));
         });

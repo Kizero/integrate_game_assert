@@ -14,7 +14,7 @@ import { ItchCollector } from './itch-collector.js';
 /**
  * 所有可用的收集器
  */
-export const AvailableCollectors: Record<string, typeof BaseCollector> = {
+export const AvailableCollectors: Record<string, new () => BaseCollector> = {
   opengameart: OpenGameArtCollector,
   itch: ItchCollector,
 };
